@@ -1,0 +1,16 @@
+{
+    "file_format_version": "1.0.0",
+    "layer": {
+        "name": "VK_LAYER_Device_Reorder",
+        "type": "GLOBAL",
+        "library_path": "./target/debug/libvk_device_reorder.so",
+        "api_version": "1.0.0",
+        "implementation_version": "1",
+        "description": "Reorder and filter the list of physical devices, to work around buggy applications",
+        "instance_extensions": [],
+        "device_extensions": [],
+        "disable_environment": {
+            "DISABLE_DEVICE_REORDER": "1"
+        }
+    }
+}
