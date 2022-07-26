@@ -12,3 +12,9 @@ paste       = "1.0"
 
 [build-dependencies]
 bindgen     = "0.60.1"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
