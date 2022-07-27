@@ -8,6 +8,8 @@ mod vk {
 }
 
 use std::ffi::CStr;
+use std::ptr;
+use std::mem::MaybeUninit;
 
 #[macro_use] mod dispatch;
 
@@ -141,9 +143,69 @@ vk_function! {
 }
 
 struct DeviceEntry {
+    /// Index into the devices array that this entry represents
+    ///
+    /// This must be left unmodified.
+    arr_idx: usize,
 }
 
-fn modify_device_entries(entries: &mut [DeviceEntry]) {
+impl DeviceEntry {
+    unsafe fn from_device(
+        dispatch: &instance_dispatch::Record,
+        dev: vk::VkPhysicalDevice,
+        arr_idx: usize,
+    ) -> Self {
+        let mut props = std::mem::MaybeUninit::uninit();
+        let mut features = std::mem::MaybeUninit::uninit();
+        (dispatch.get_physical_device_properties)(dev, props.as_mut_ptr());
+        (dispatch.get_physical_device_features)(dev, features.as_mut_ptr());
+
+        dbg!(std::mem::MaybeUninit::assume_init(props));
+        dbg!(std::mem::MaybeUninit::assume_init(features));
+        Self {
+            arr_idx,
+        }
+    }
+}
+
+/// Modify the given vector of device entries
+fn modify_device_entries(entries: &mut Vec<DeviceEntry>) {
+    entries.swap(0, 1);
+}
+
+struct DeviceArray<'a> {
+    entries: Vec<DeviceEntry>,
+    array: &'a mut [vk::VkPhysicalDevice],
+}
+
+impl<'a> DeviceArray<'a> {
+    unsafe fn from_raw(
+        dispatch: &instance_dispatch::Record,
+        array: &'a mut [vk::VkPhysicalDevice]
+    ) -> Self {
+        let entries = array.iter().enumerate()
+                     .map(|(i, d)| DeviceEntry::from_device(dispatch, *d, i))
+                     .collect();
+
+        Self {
+            array,
+            entries,
+        }
+    }
+
+    /// Commit changes to the `entries` array back to `array`, returning the number of items to
+    /// keep.
+    fn commit(self) -> usize {
+        // allocate temporary buffer
+        let temp_buf = self.entries.into_iter()
+                      .map(|e| self.array[e.arr_idx])
+                      .collect::<Vec<_>>();
+
+        // copy back into array
+        self.array[..temp_buf.len()].copy_from_slice(&temp_buf);
+
+        temp_buf.len()
+    }
 }
 
 vk_function! {
@@ -154,39 +216,45 @@ vk_function! {
     ) -> VkResult {
         let dispatch = instance_dispatch::get(instance as usize)
                       .ok_or(vk::VkResult_VK_ERROR_UNKNOWN)?;
+        
+        // query the real device list and process it via our filtering function
+        let mut num_devs = 0;
+        (dispatch.enumerate_physical_devices)(instance, &mut num_devs, ptr::null_mut()).from_vk()?;
 
+        let mut devices_temp = Vec::with_capacity(num_devs as usize);
+        (dispatch.enumerate_physical_devices)(instance, &mut num_devs, devices_temp.as_mut_ptr())
+            .from_vk()?;
+        devices_temp.set_len(num_devs as usize);
+
+        let mut array = DeviceArray::from_raw(&dispatch, devices_temp.as_mut_slice());
+        modify_device_entries(&mut array.entries);
+        let new_len = array.commit();
+        devices_temp.truncate(new_len);
+
+        // if the user provided a buffer, copy the 
         if !devices.is_null() {
-            (dispatch.enumerate_physical_devices)(instance, dev_count, devices).from_vk()?;
+            let user_count = *dev_count as usize;
 
-            dbg!(*dev_count);
-
-            let devices: &mut [vk::VkPhysicalDevice] = std::slice::from_raw_parts_mut(
-                devices,
+            let devices: &mut [MaybeUninit<vk::VkPhysicalDevice>] = std::slice::from_raw_parts_mut(
+                devices as *mut MaybeUninit<vk::VkPhysicalDevice>,
                 *dev_count as usize
             );
-            dbg!(&devices);
 
-            // modify device list
-            for dev in devices.iter() {
-                let mut props = std::mem::MaybeUninit::uninit();
-                let mut features = std::mem::MaybeUninit::uninit();
-                (dispatch.get_physical_device_properties)(*dev, props.as_mut_ptr());
-                (dispatch.get_physical_device_features)(*dev, features.as_mut_ptr());
-                dbg!(std::mem::MaybeUninit::assume_init(props));
-                dbg!(std::mem::MaybeUninit::assume_init(features));
+            if user_count >= devices_temp.len() {
+                // copy all entries
+                for (arr_entry, dev) in devices.iter_mut().zip(devices_temp) {
+                    arr_entry.write(dev);
+                }
+                *dev_count = devices_temp.len() as u32;
+            } else {
+                // copy up to the allocated amount
+                for (arr_entry, dev) in devices[..user_count].iter_mut().zip(devices_temp) {
+                    arr_entry.write(dev);
+                }
+                return vk::VkResult_VK_INCOMPLETE.from_vk();
             }
-
-            devices.swap(0, 1);
-
-            // truncate if needed
-            *dev_count = devices.len() as u32;
-
-            dbg!(*dev_count);
         } else {
-            // the user didn't provide a device buffer, and we may filter devices - in order to
-            // present a valid view of reality to the caller, we need to query for the devices,
-            // filter, and then return the resulting count.
-            (dispatch.enumerate_physical_devices)(instance, dev_count, devices).from_vk()?;
+            *dev_count = devices_temp.len() as u32;
         }
 
         Ok(())
