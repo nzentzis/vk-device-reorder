@@ -16,11 +16,12 @@ use std::mem::MaybeUninit;
 // generate per-instance dispatch table
 dispatch_table! {
     instance_dispatch {
-        GetInstanceProcAddr
-        DestroyInstance
-        EnumeratePhysicalDevices
-        GetPhysicalDeviceProperties
-        GetPhysicalDeviceFeatures
+        GetInstanceProcAddr,
+        DestroyInstance,
+        EnumeratePhysicalDevices,
+        GetPhysicalDeviceProperties,
+        GetPhysicalDeviceFeatures,
+        GetPhysicalDeviceDisplayPropertiesKHR?,
     }
 }
 
@@ -242,10 +243,10 @@ vk_function! {
 
             if user_count >= devices_temp.len() {
                 // copy all entries
+                *dev_count = devices_temp.len() as u32;
                 for (arr_entry, dev) in devices.iter_mut().zip(devices_temp) {
                     arr_entry.write(dev);
                 }
-                *dev_count = devices_temp.len() as u32;
             } else {
                 // copy up to the allocated amount
                 for (arr_entry, dev) in devices[..user_count].iter_mut().zip(devices_temp) {

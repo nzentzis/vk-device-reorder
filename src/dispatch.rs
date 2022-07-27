@@ -49,79 +49,121 @@ macro_rules! get_proc_addr {
 }
 
 macro_rules! dispatch_table {
-    { $(
-        $name:ident {
-            $($vk_name:ident)*
+    { $name:ident { $($body:tt)* } } => {
+        dispatch_table! {
+            __BUILD {
+                $name
+            }
+            __PARSE
+            $($body)*
         }
-    )* } => {
-        $(
-            #[allow(dead_code)]
-            mod $name {
-                use std::collections::HashMap;
-                use std::sync::RwLock;
-                use std::sync::Arc;
+    };
+    { __BUILD { $($buf:tt)* } __PARSE $vk_name:ident , $($rest:tt)* } => {
+        dispatch_table! {
+            __BUILD {
+                $($buf)*
+                $vk_name mandatory
+            }
+            __PARSE
+            $($rest)*
+        }
+    };
+    { __BUILD { $($buf:tt)* } __PARSE $vk_name:ident ? , $($rest:tt)* } => {
+        dispatch_table! {
+            __BUILD {
+                $($buf)*
+                $vk_name optional
+            }
+            __PARSE
+            $($rest)*
+        }
+    };
+    { __BUILD { $name:ident $($vk_name:ident $vk_kind:ident)* } __PARSE } => {
+        #[allow(dead_code)]
+        mod $name {
+            use std::collections::HashMap;
+            use std::sync::RwLock;
+            use std::sync::Arc;
 
-                lazy_static::lazy_static! {
-                    static ref TABLE: RwLock<HashMap<usize, Arc<Record>>> = RwLock::new(HashMap::new());
+            lazy_static::lazy_static! {
+                static ref TABLE: RwLock<HashMap<usize, Arc<Record>>> = RwLock::new(HashMap::new());
+            }
+
+            paste::paste! {
+                pub(crate) struct Record {
+                    $(
+                        pub [<$vk_name:snake>] :
+                            dispatch_table! { __dispatch_build_type $vk_name $vk_kind },
+                    )*
                 }
+            }
 
-                paste::paste! {
-                    pub(crate) struct Record {
-                        $(
-                            pub [<$vk_name:snake>] : <
-                                crate::vk:: [< PFN_vk $vk_name >]
-                                as crate::dispatch::ProjectOption
-                            >::Inner,
-                        )*
-                    }
-                }
-
-                impl Record {
-                    fn build(
-                        instance: crate::vk::VkInstance,
-                        gpa: crate::dispatch::GetProcAddr,
-                    ) -> Option<Self> {
-                        unsafe {
-                            paste::paste! {
-                                Some(Self {
-                                    $(
-                                        [<$vk_name:snake>]: get_proc_addr!(
-                                            gpa(instance, stringify!([< vk $vk_name >]) =>
-                                                crate::vk:: [< PFN_vk $vk_name >])
-                                        )?,
-                                    )*
-                                })
-                            }
+            impl Record {
+                fn build(
+                    instance: crate::vk::VkInstance,
+                    gpa: crate::dispatch::GetProcAddr,
+                ) -> Option<Self> {
+                    unsafe {
+                        paste::paste! {
+                            Some(Self {
+                                $(
+                                    [<$vk_name:snake>]: dispatch_table! {
+                                        __dispatch_init_field gpa instance $vk_name $vk_kind
+                                    },
+                                )*
+                            })
                         }
                     }
                 }
+            }
 
-                /// Build a dispatch table and associate it with the given key
-                ///
-                /// Returns whether the table was built successfully
-                pub(crate) fn build(
-                    key: usize,
-                    instance: crate::vk::VkInstance,
-                    gpa: crate::dispatch::GetProcAddr,
-                ) -> bool {
-                    if let Some(rec) = Record::build(instance, gpa) {
-                        TABLE.write().unwrap().insert(key, Arc::new(rec));
-                        true
-                    } else {
-                        false
-                    }
-                }
-
-                /// Get the dispatch table entry associated with the given key, if any
-                pub(crate) fn get(key: usize) -> Option<Arc<Record>> {
-                    TABLE.read().unwrap().get(&key).map(Arc::clone)
-                }
-
-                /// Remove the dispatch table entry associated with the given key, if any
-                pub(crate) fn destroy(key: usize) {
-                    TABLE.write().unwrap().remove(&key);
+            /// Build a dispatch table and associate it with the given key
+            ///
+            /// Returns whether the table was built successfully
+            pub(crate) fn build(
+                key: usize,
+                instance: crate::vk::VkInstance,
+                gpa: crate::dispatch::GetProcAddr,
+            ) -> bool {
+                if let Some(rec) = Record::build(instance, gpa) {
+                    TABLE.write().unwrap().insert(key, Arc::new(rec));
+                    true
+                } else {
+                    false
                 }
             }
-        )*
-    }
+
+            /// Get the dispatch table entry associated with the given key, if any
+            pub(crate) fn get(key: usize) -> Option<Arc<Record>> {
+                TABLE.read().unwrap().get(&key).map(Arc::clone)
+            }
+
+            /// Remove the dispatch table entry associated with the given key, if any
+            pub(crate) fn destroy(key: usize) {
+                TABLE.write().unwrap().remove(&key);
+            }
+        }
+    };
+    { __dispatch_build_type $name:ident mandatory } => {
+        paste::paste! { <crate::vk:: [< PFN_vk $name >] as crate::dispatch::ProjectOption>::Inner }
+    };
+    { __dispatch_build_type $name:ident optional } => {
+        paste::paste! { crate::vk:: [< PFN_vk $name >] }
+    };
+    { __dispatch_init_field $gpa:ident $inst:ident $name:ident mandatory } => {
+        paste::paste! {
+            get_proc_addr!(
+                $gpa($inst, stringify!([< vk $name >]) =>
+                    crate::vk:: [< PFN_vk $name >])
+            )?
+        }
+    };
+    { __dispatch_init_field $gpa:ident $inst:ident $name:ident optional } => {
+        paste::paste! {
+            get_proc_addr!(
+                $gpa($inst, stringify!([< vk $name >]) =>
+                    crate::vk:: [< PFN_vk $name >])
+            )
+        }
+    };
 }
