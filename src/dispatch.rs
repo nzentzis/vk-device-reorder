@@ -90,6 +90,7 @@ macro_rules! dispatch_table {
             }
 
             paste::paste! {
+                #[derive(Debug)]
                 pub(crate) struct Record {
                     $(
                         pub [<$vk_name:snake>] :
@@ -126,6 +127,7 @@ macro_rules! dispatch_table {
                 gpa: crate::dispatch::GetProcAddr,
             ) -> bool {
                 if let Some(rec) = Record::build(instance, gpa) {
+                    dbg!(&rec);
                     TABLE.write().unwrap().insert(key, Arc::new(rec));
                     true
                 } else {
