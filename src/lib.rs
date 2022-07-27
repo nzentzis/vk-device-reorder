@@ -143,11 +143,56 @@ vk_function! {
     }
 }
 
+#[derive(Debug)]
 struct DeviceEntry {
     /// Index into the devices array that this entry represents
     ///
     /// This must be left unmodified.
     arr_idx: usize,
+
+    /// Device name
+    name: String,
+
+    /// Raw device properties
+    props: vk::VkPhysicalDeviceProperties,
+
+    /// Raw device features
+    features: vk::VkPhysicalDeviceFeatures,
+
+    /// Whether the device has any displays attached
+    displays: Vec<DisplayInfo>,
+}
+
+#[derive(Debug)]
+struct DisplayInfo {
+    /// Name of the display
+    name: String,
+
+    /// Physical resolution
+    resolution: (u32, u32),
+}
+
+unsafe fn get_displays(
+    dispatch: &instance_dispatch::Record,
+    dev: vk::VkPhysicalDevice,
+) -> Result<Vec<DisplayInfo>, vk::VkResult> {
+    if let Some(get_props) = dispatch.get_physical_device_display_properties_k_h_r {
+        let mut num_displays = 0;
+        (get_props)(dev, &mut num_displays, ptr::null_mut()).from_vk()?;
+
+        let mut props_arr = Vec::with_capacity(num_displays as usize);
+        (get_props)(dev, &mut num_displays, props_arr.as_mut_ptr()).from_vk()?;
+        props_arr.set_len(num_displays as usize);
+
+        Ok(props_arr.into_iter().map(|entry| {
+            DisplayInfo {
+                name: String::new(),
+                resolution: (entry.physicalResolution.width, entry.physicalResolution.height),
+            }
+        }).collect())
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 impl DeviceEntry {
@@ -156,21 +201,37 @@ impl DeviceEntry {
         dev: vk::VkPhysicalDevice,
         arr_idx: usize,
     ) -> Self {
-        let mut props = std::mem::MaybeUninit::uninit();
-        let mut features = std::mem::MaybeUninit::uninit();
+        let mut props = MaybeUninit::uninit();
+        let mut features = MaybeUninit::uninit();
         (dispatch.get_physical_device_properties)(dev, props.as_mut_ptr());
         (dispatch.get_physical_device_features)(dev, features.as_mut_ptr());
 
-        dbg!(std::mem::MaybeUninit::assume_init(props));
-        dbg!(std::mem::MaybeUninit::assume_init(features));
+        let props = MaybeUninit::assume_init(props);
+        let features = MaybeUninit::assume_init(features);
+
+        let name = {
+            let name = props.deviceName.as_slice();
+            let name = &*(name as *const _ as *const [u8]);
+            let length = name.iter().position(|b| *b == 0).unwrap_or(name.len());
+            String::from_utf8_lossy(&name[..length]).into_owned()
+        };
+
+        // query attached display devices
+        let displays = get_displays(dispatch, dev).unwrap_or_else(|_| Vec::new());
+
         Self {
             arr_idx,
+            props,
+            features,
+            name,
+            displays,
         }
     }
 }
 
 /// Modify the given vector of device entries
 fn modify_device_entries(entries: &mut Vec<DeviceEntry>) {
+    dbg!(&entries);
     entries.swap(0, 1);
 }
 
