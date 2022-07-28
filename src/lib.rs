@@ -12,6 +12,7 @@ use std::ptr;
 use std::mem::MaybeUninit;
 
 #[macro_use] mod dispatch;
+mod config;
 
 // generate per-instance dispatch table
 dispatch_table! {
@@ -231,8 +232,15 @@ impl DeviceEntry {
 
 /// Modify the given vector of device entries
 fn modify_device_entries(entries: &mut Vec<DeviceEntry>) {
-    dbg!(&entries);
-    entries.swap(0, 1);
+    let conf: &config::Config = &config::CONFIG;
+    entries.retain(|ent| !conf.rules_matching(ent)
+                              .any(|r| r.hide));
+    entries.sort_unstable_by_key(|ent| conf.rules_matching(ent)
+                                           .filter_map(|r| r.priority)
+                                           .map(|x| -x) // negate, so higher priorities go to the
+                                                        // top of the resulting list
+                                           .max()
+                                           .unwrap_or(0));
 }
 
 struct DeviceArray<'a> {

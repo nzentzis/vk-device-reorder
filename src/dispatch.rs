@@ -127,7 +127,6 @@ macro_rules! dispatch_table {
                 gpa: crate::dispatch::GetProcAddr,
             ) -> bool {
                 if let Some(rec) = Record::build(instance, gpa) {
-                    dbg!(&rec);
                     TABLE.write().unwrap().insert(key, Arc::new(rec));
                     true
                 } else {
