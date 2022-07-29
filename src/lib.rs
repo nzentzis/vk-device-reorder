@@ -239,8 +239,7 @@ fn modify_device_entries(entries: &mut Vec<DeviceEntry>) {
                                            .filter_map(|r| r.priority)
                                            .map(|x| -x) // negate, so higher priorities go to the
                                                         // top of the resulting list
-                                           .max()
-                                           .unwrap_or(0));
+                                           .sum::<i64>());
 }
 
 struct DeviceArray<'a> {
