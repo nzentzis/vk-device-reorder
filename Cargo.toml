@@ -2,6 +2,9 @@
 name = "vk-device-reorder"
 version = "0.1.0"
 edition = "2021"
+authors = ["Noah Zentzis"]
+license = "MIT"
+license-file = "LICENSE"
 
 [lib]
 crate-type = ["cdylib"]
